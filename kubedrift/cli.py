@@ -6,6 +6,7 @@ Commands:
   diff      Compare two snapshot files and report drift.
   watch     Poll the cluster for drift against a baseline.
   report    Pretty-print a snapshot.
+  demo      Spin up demo workloads, mutate them, and show the drift report.
 """
 
 from __future__ import annotations
@@ -124,6 +125,23 @@ def watch(
 def report(snapshot_file: str) -> None:
     """Pretty-print a snapshot file."""
     print_snapshot_report(load_snapshot(snapshot_file), console)
+
+
+@main.command()
+@click.option("--context", default=None, help="kubeconfig context (default: current).")
+@click.option("--keep", is_flag=True, help="Leave the kubedrift-demo namespace running.")
+def demo(context: str | None, keep: bool) -> None:
+    """End-to-end demo: deploy workloads, mutate them, show the drift report.
+
+    Needs a working cluster context (kind, minikube, k3s, anything).
+    Everything happens inside a throwaway `kubedrift-demo` namespace.
+    """
+    from kubedrift.demo.runner import run_demo
+
+    try:
+        run_demo(context=context, keep=keep, console=console)
+    except KubectlError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 if __name__ == "__main__":
