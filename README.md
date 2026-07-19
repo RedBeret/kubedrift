@@ -13,7 +13,7 @@ Sister project to [pgdrift](https://github.com/RedBeret/pgdrift), which does the
 ## Quick start
 
 ```bash
-pipx install kubedrift        # or: pip install kubedrift
+pipx install git+https://github.com/RedBeret/kubedrift
 
 # Capture current cluster state (all non-system namespaces)
 kubedrift snapshot
