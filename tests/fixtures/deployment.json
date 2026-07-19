@@ -1,0 +1,47 @@
+{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "name": "parts-api",
+    "namespace": "prod",
+    "labels": {"app": "parts-api"}
+  },
+  "spec": {
+    "replicas": 3,
+    "selector": {"matchLabels": {"app": "parts-api"}},
+    "template": {
+      "metadata": {"labels": {"app": "parts-api"}},
+      "spec": {
+        "containers": [
+          {
+            "name": "api",
+            "image": "ghcr.io/acme/parts-api:2.4.1",
+            "resources": {
+              "requests": {"cpu": "100m", "memory": "128Mi"},
+              "limits": {"memory": "256Mi"}
+            },
+            "env": [
+              {"name": "LOG_LEVEL", "value": "info"},
+              {
+                "name": "DB_PASSWORD",
+                "valueFrom": {"secretKeyRef": {"name": "db-credentials", "key": "password"}}
+              },
+              {
+                "name": "CACHE_TTL",
+                "valueFrom": {"configMapKeyRef": {"name": "app-config", "key": "CACHE_TTL"}}
+              },
+              {
+                "name": "POD_NAME",
+                "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}
+              }
+            ]
+          },
+          {
+            "name": "sidecar",
+            "image": "envoyproxy/envoy:v1.30.1"
+          }
+        ]
+      }
+    }
+  }
+}
