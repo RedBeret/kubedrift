@@ -6,12 +6,12 @@ keep failures easy to diagnose.
 
 from kubedrift.diff import compute_diff
 from kubedrift.models import ContainerSpec, EnvVar
-from tests.helpers import deployment, snap
+from tests.helpers import configmap, deployment, secret, snap
 
 
 def test_no_changes_yields_empty_diff():
-    a = snap(workloads=deployment())
-    b = snap(workloads=deployment())
+    a = snap(workloads=deployment(), configmaps=configmap())
+    b = snap(workloads=deployment(), configmaps=configmap())
     diff = compute_diff(a, b)
     assert diff.entries == []
     assert not diff.has_breaking
@@ -96,3 +96,17 @@ def test_resource_limit_change_is_informational():
         snap(workloads=deployment(containers=after)),
     )
     assert [e.category for e in diff.entries] == ["INFORMATIONAL"]
+
+
+def test_configmap_key_removed_is_breaking_value_change_informational():
+    before = configmap(keys={"A": "sha256:1", "B": "sha256:2"})
+    after = configmap(keys={"B": "sha256:changed"})
+    diff = compute_diff(snap(configmaps=before), snap(configmaps=after))
+    cats = {e.name: e.category for e in diff.entries}
+    assert cats == {"A": "BREAKING", "B": "INFORMATIONAL"}
+
+
+def test_deleted_secret_is_breaking():
+    diff = compute_diff(snap(secrets=secret()), snap())
+    assert diff.has_breaking
+    assert diff.entries[0].object_type == "secret"

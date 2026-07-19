@@ -101,6 +101,34 @@ def _diff_workload(b: WorkloadSchema, c: WorkloadSchema, resource: str) -> list[
     return entries
 
 
+def _diff_keyed(
+    baseline_keys: dict[str, str],
+    current_keys: dict[str, str],
+    resource: str,
+    object_type: str,
+) -> list[DiffEntry]:
+    """Shared logic for configmap/secret data keys (values are hashes)."""
+    entries: list[DiffEntry] = []
+    for key in sorted(set(baseline_keys) - set(current_keys)):
+        entries.append(
+            _entry(
+                "BREAKING",
+                object_type,
+                resource,
+                key,
+                "key removed — anything mounting or referencing it will fail",
+            )
+        )
+    for key in sorted(set(current_keys) - set(baseline_keys)):
+        entries.append(_entry("ADDITIVE", object_type, resource, key, "new key"))
+    for key in sorted(set(baseline_keys) & set(current_keys)):
+        if baseline_keys[key] != current_keys[key]:
+            entries.append(
+                _entry("INFORMATIONAL", object_type, resource, key, "value changed (hash differs)")
+            )
+    return entries
+
+
 def compute_diff(baseline: SnapshotModel, current: SnapshotModel) -> DiffResult:
     entries: list[DiffEntry] = []
 
@@ -113,6 +141,18 @@ def compute_diff(baseline: SnapshotModel, current: SnapshotModel) -> DiffResult:
         entries.append(_entry("ADDITIVE", "workload", key, w.name, f"new {w.kind.lower()}"))
     for key in sorted(set(baseline.workloads) & set(current.workloads)):
         entries.extend(_diff_workload(baseline.workloads[key], current.workloads[key], key))
+
+    # --- configmaps and secrets -----------------------------------------
+    for label, b_group, c_group in (
+        ("configmap", baseline.configmaps, current.configmaps),
+        ("secret", baseline.secrets, current.secrets),
+    ):
+        for key in sorted(set(b_group) - set(c_group)):
+            entries.append(_entry("BREAKING", label, key, b_group[key].name, f"{label} deleted"))
+        for key in sorted(set(c_group) - set(b_group)):
+            entries.append(_entry("ADDITIVE", label, key, c_group[key].name, f"new {label}"))
+        for key in sorted(set(b_group) & set(c_group)):
+            entries.extend(_diff_keyed(b_group[key].keys, c_group[key].keys, key, label))
 
     return DiffResult(
         baseline_captured_at=baseline.captured_at,
