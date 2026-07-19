@@ -28,7 +28,8 @@ def run_demo(context: str | None, keep: bool, console: Console) -> None:
     kubectl.ensure_namespace(DEMO_NAMESPACE, context)
 
     console.print(
-        "[bold]2/5[/bold] Deploying baseline stack (4 workloads, configmap, secret, service)..."
+        "[bold]2/5[/bold] Deploying baseline stack "
+        "(deployments, statefulset, daemonset, services, ingress, configmap, secret)..."
     )
     _apply_bundled("baseline.yaml", context)
 
