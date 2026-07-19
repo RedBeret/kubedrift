@@ -4,6 +4,7 @@ kubedrift CLI — entry point for all commands.
 Commands:
   snapshot  Capture cluster state to a JSON file.
   diff      Compare two snapshot files and report drift.
+  watch     Poll the cluster for drift against a baseline.
   report    Pretty-print a snapshot.
 """
 
@@ -78,6 +79,43 @@ def diff(baseline: str, current: str, as_json: bool, fail_on_breaking: bool) -> 
     else:
         print_diff_report(result, console)
     if fail_on_breaking and result.has_breaking:
+        sys.exit(1)
+
+
+@main.command()
+@click.option("--baseline", required=True, type=click.Path(exists=True), help="Baseline snapshot.")
+@click.option("--namespace", "-n", default=None, help="Namespace to watch (default: all).")
+@click.option("--context", default=None, help="kubeconfig context (default: current).")
+@click.option("--interval", default=60, show_default=True, help="Seconds between polls.")
+@click.option(
+    "--max-iterations", default=None, type=int, help="Stop after N polls (default: forever)."
+)
+def watch(
+    baseline: str,
+    namespace: str | None,
+    context: str | None,
+    interval: int,
+    max_iterations: int | None,
+) -> None:
+    """Poll the cluster for drift against a baseline. Exits 1 on BREAKING drift."""
+    from kubedrift.watch import watch_for_drift
+
+    base = load_snapshot(baseline)
+    console.print(
+        f"Watching for drift against [bold]{baseline}[/bold] every {interval}s. Ctrl-C to stop."
+    )
+    try:
+        breaking = watch_for_drift(
+            base,
+            namespace=namespace,
+            context=context,
+            interval=interval,
+            max_iterations=max_iterations,
+            console=console,
+        )
+    except KubectlError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if breaking:
         sys.exit(1)
 
 
