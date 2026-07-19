@@ -154,6 +154,78 @@ def compute_diff(baseline: SnapshotModel, current: SnapshotModel) -> DiffResult:
         for key in sorted(set(b_group) & set(c_group)):
             entries.extend(_diff_keyed(b_group[key].keys, c_group[key].keys, key, label))
 
+    # --- services --------------------------------------------------------
+    for key in sorted(set(baseline.services) - set(current.services)):
+        entries.append(
+            _entry("BREAKING", "service", key, baseline.services[key].name, "service deleted")
+        )
+    for key in sorted(set(current.services) - set(baseline.services)):
+        entries.append(
+            _entry("ADDITIVE", "service", key, current.services[key].name, "new service")
+        )
+    for key in sorted(set(baseline.services) & set(current.services)):
+        b, c = baseline.services[key], current.services[key]
+        if b.selector != c.selector:
+            entries.append(
+                _entry(
+                    "BREAKING",
+                    "service",
+                    key,
+                    c.name,
+                    f"selector {b.selector} -> {c.selector} — traffic may route nowhere",
+                )
+            )
+        if b.type != c.type:
+            entries.append(
+                _entry("INFORMATIONAL", "service", key, c.name, f"type {b.type} -> {c.type}")
+            )
+        b_ports, c_ports = b.port_map(), c.port_map()
+        for pkey in sorted(set(b_ports) - set(c_ports)):
+            entries.append(_entry("BREAKING", "service", key, pkey, "port removed"))
+        for pkey in sorted(set(c_ports) - set(b_ports)):
+            entries.append(_entry("ADDITIVE", "service", key, pkey, "new port"))
+        for pkey in sorted(set(b_ports) & set(c_ports)):
+            if b_ports[pkey].target_port != c_ports[pkey].target_port:
+                entries.append(
+                    _entry(
+                        "INFORMATIONAL",
+                        "service",
+                        key,
+                        pkey,
+                        f"targetPort {b_ports[pkey].target_port} -> {c_ports[pkey].target_port}",
+                    )
+                )
+
+    # --- ingresses -------------------------------------------------------
+    for key in sorted(set(baseline.ingresses) - set(current.ingresses)):
+        entries.append(
+            _entry("BREAKING", "ingress", key, baseline.ingresses[key].name, "ingress deleted")
+        )
+    for key in sorted(set(current.ingresses) - set(baseline.ingresses)):
+        entries.append(
+            _entry("ADDITIVE", "ingress", key, current.ingresses[key].name, "new ingress")
+        )
+    for key in sorted(set(baseline.ingresses) & set(current.ingresses)):
+        b_rules = baseline.ingresses[key].rule_map()
+        c_rules = current.ingresses[key].rule_map()
+        for rkey in sorted(set(b_rules) - set(c_rules)):
+            entries.append(_entry("BREAKING", "ingress", key, rkey, "route removed"))
+        for rkey in sorted(set(c_rules) - set(b_rules)):
+            entries.append(_entry("ADDITIVE", "ingress", key, rkey, "new route"))
+        for rkey in sorted(set(b_rules) & set(c_rules)):
+            b_r, c_r = b_rules[rkey], c_rules[rkey]
+            if (b_r.backend_service, b_r.backend_port) != (c_r.backend_service, c_r.backend_port):
+                entries.append(
+                    _entry(
+                        "INFORMATIONAL",
+                        "ingress",
+                        key,
+                        rkey,
+                        f"backend {b_r.backend_service}:{b_r.backend_port}"
+                        f" -> {c_r.backend_service}:{c_r.backend_port}",
+                    )
+                )
+
     return DiffResult(
         baseline_captured_at=baseline.captured_at,
         current_captured_at=current.captured_at,

@@ -5,13 +5,13 @@ keep failures easy to diagnose.
 """
 
 from kubedrift.diff import compute_diff
-from kubedrift.models import ContainerSpec, EnvVar
-from tests.helpers import configmap, deployment, secret, snap
+from kubedrift.models import ContainerSpec, EnvVar, ServicePort
+from tests.helpers import configmap, deployment, secret, service, snap
 
 
 def test_no_changes_yields_empty_diff():
-    a = snap(workloads=deployment(), configmaps=configmap())
-    b = snap(workloads=deployment(), configmaps=configmap())
+    a = snap(workloads=deployment(), services=service(), configmaps=configmap())
+    b = snap(workloads=deployment(), services=service(), configmaps=configmap())
     diff = compute_diff(a, b)
     assert diff.entries == []
     assert not diff.has_breaking
@@ -110,3 +110,34 @@ def test_deleted_secret_is_breaking():
     diff = compute_diff(snap(secrets=secret()), snap())
     assert diff.has_breaking
     assert diff.entries[0].object_type == "secret"
+
+
+def test_service_selector_change_is_breaking():
+    diff = compute_diff(
+        snap(services=service(selector={"app": "parts-api"})),
+        snap(services=service(selector={"app": "parts-api-v2"})),
+    )
+    assert diff.has_breaking
+
+
+def test_service_port_removed_is_breaking_added_is_additive():
+    before = service(ports=[ServicePort("http", 80, "8080", "TCP")])
+    after = service(ports=[ServicePort("metrics", 9090, "9090", "TCP")])
+    diff = compute_diff(snap(services=before), snap(services=after))
+    cats = {e.name: e.category for e in diff.entries}
+    assert cats == {"TCP/80": "BREAKING", "TCP/9090": "ADDITIVE"}
+
+
+def test_service_type_change_is_informational():
+    diff = compute_diff(
+        snap(services=service(svc_type="ClusterIP")),
+        snap(services=service(svc_type="NodePort")),
+    )
+    assert [e.category for e in diff.entries] == ["INFORMATIONAL"]
+
+
+def test_co_occurring_changes_are_all_reported():
+    before = deployment(replicas=2, image="nginx:1.25")
+    after = deployment(replicas=0, image="nginx:1.27")
+    diff = compute_diff(snap(workloads=before), snap(workloads=after))
+    assert sorted(e.category for e in diff.entries) == ["BREAKING", "IMAGE"]
