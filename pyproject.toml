@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kubedrift"
+version = "1.0.0"
+description = "Kubernetes cluster state snapshot and drift detector"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "click>=8.1",
+    "rich>=13.0",
+]
+
+[project.scripts]
+kubedrift = "kubedrift.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.4"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kubedrift*"]
+
+[tool.setuptools.package-data]
+"kubedrift.demo" = ["*.yaml"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501"]
