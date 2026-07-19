@@ -1,8 +1,9 @@
 """
 Snapshot capture, parsing, and (de)serialization.
 
-Every parse_* function is pure (raw kubectl JSON in, dataclass out) so the
-whole pipeline is testable from fixture files without a cluster.
+take_snapshot() talks to the cluster via kubectl; every parse_* function is
+pure (raw kubectl JSON in, dataclass out) so the whole pipeline is testable
+from fixture files without a cluster.
 
 Secret values and inline env values are stored as truncated SHA-256 digests —
 snapshots stay safe to commit while still detecting that a value changed.
@@ -11,9 +12,12 @@ snapshots stay safe to commit while still detecting that a value changed.
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 from datetime import UTC, datetime
 from typing import Any
 
+from kubedrift import kubectl
 from kubedrift.models import (
     FORMAT_VERSION,
     ConfigMapSchema,
@@ -188,4 +192,116 @@ def build_snapshot(
         secrets=secrets,
         services=services,
         ingresses=ingresses,
+    )
+
+
+# System configmaps/secrets present in every namespace — noise, not drift.
+_SKIP_CONFIGMAPS = {"kube-root-ca.crt"}
+_SKIP_SECRET_TYPES = {"kubernetes.io/service-account-token"}
+_SYSTEM_NAMESPACES = {"kube-system", "kube-public", "kube-node-lease", "local-path-storage"}
+
+
+def take_snapshot(
+    namespace: str | None = None,
+    context: str | None = None,
+    include_system: bool = False,
+) -> SnapshotModel:
+    """Capture live cluster state via kubectl.
+
+    namespace=None captures all namespaces (minus system ones unless
+    include_system is set).
+    """
+
+    def _filtered(kind: str) -> list[dict[str, Any]]:
+        items = kubectl.get_items(kind, namespace=namespace, context=context)
+        if namespace is None and not include_system:
+            items = [i for i in items if i["metadata"]["namespace"] not in _SYSTEM_NAMESPACES]
+        return items
+
+    workload_items = []
+    for kind in WORKLOAD_KINDS:
+        workload_items.extend(_filtered(kind))
+
+    configmap_items = [
+        i for i in _filtered("configmaps") if i["metadata"]["name"] not in _SKIP_CONFIGMAPS
+    ]
+    secret_items = [i for i in _filtered("secrets") if i.get("type") not in _SKIP_SECRET_TYPES]
+    service_items = _filtered("services")
+    ingress_items = _filtered("ingresses")
+
+    return build_snapshot(
+        context=context or kubectl.current_context(),
+        server_version=kubectl.server_version(context),
+        workload_items=workload_items,
+        configmap_items=configmap_items,
+        secret_items=secret_items,
+        service_items=service_items,
+        ingress_items=ingress_items,
+    )
+
+
+def save_snapshot(snap: SnapshotModel, path: str) -> None:
+    """Write snapshot as deterministic JSON — sorted keys, stable formatting."""
+    with open(path, "w") as f:
+        json.dump(snap.to_dict(), f, indent=2, sort_keys=True)
+        f.write("\n")
+
+
+def load_snapshot(path: str) -> SnapshotModel:
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"snapshot file not found: {path}")
+    with open(path) as f:
+        raw = json.load(f)
+
+    version = raw.get("format_version")
+    if version != FORMAT_VERSION:
+        raise ValueError(
+            f"unsupported snapshot format_version {version} (expected {FORMAT_VERSION})"
+        )
+
+    return SnapshotModel(
+        format_version=raw["format_version"],
+        captured_at=raw["captured_at"],
+        context=raw["context"],
+        server_version=raw["server_version"],
+        namespaces=raw["namespaces"],
+        workloads={
+            k: WorkloadSchema(
+                kind=w["kind"],
+                namespace=w["namespace"],
+                name=w["name"],
+                replicas=w["replicas"],
+                containers=[
+                    ContainerSpec(
+                        name=c["name"],
+                        image=c["image"],
+                        requests=c["requests"],
+                        limits=c["limits"],
+                        env=[EnvVar(**e) for e in c["env"]],
+                    )
+                    for c in w["containers"]
+                ],
+            )
+            for k, w in raw["workloads"].items()
+        },
+        configmaps={k: ConfigMapSchema(**c) for k, c in raw["configmaps"].items()},
+        secrets={k: SecretSchema(**s) for k, s in raw["secrets"].items()},
+        services={
+            k: ServiceSchema(
+                namespace=s["namespace"],
+                name=s["name"],
+                type=s["type"],
+                selector=s["selector"],
+                ports=[ServicePort(**p) for p in s["ports"]],
+            )
+            for k, s in raw["services"].items()
+        },
+        ingresses={
+            k: IngressSchema(
+                namespace=i["namespace"],
+                name=i["name"],
+                rules=[IngressRule(**r) for r in i["rules"]],
+            )
+            for k, i in raw["ingresses"].items()
+        },
     )

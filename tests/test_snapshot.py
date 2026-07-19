@@ -7,12 +7,16 @@ parse layer is exercised the same way it is against a real cluster.
 import json
 import os
 
+import pytest
+
 from kubedrift.snapshot import (
     build_snapshot,
     hash_value,
+    load_snapshot,
     parse_ingress,
     parse_service,
     parse_workload,
+    save_snapshot,
 )
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -83,3 +87,48 @@ def test_build_snapshot_keys_and_namespaces():
     assert "prod/Deployment/parts-api" in snap.workloads
     assert "prod/parts-api" in snap.services
     assert snap.namespaces == ["prod"]
+
+
+def test_save_load_round_trip(tmp_path):
+    snap = build_snapshot(
+        context="test",
+        server_version="v1.30.0",
+        workload_items=[_load("deployment.json")],
+        configmap_items=[],
+        secret_items=[],
+        service_items=[_load("service.json")],
+        ingress_items=[_load("ingress.json")],
+    )
+    path = tmp_path / "snap.json"
+    save_snapshot(snap, str(path))
+    loaded = load_snapshot(str(path))
+    assert loaded == snap
+
+
+def test_save_is_deterministic(tmp_path):
+    snap = build_snapshot(
+        context="test",
+        server_version="v1.30.0",
+        workload_items=[_load("deployment.json")],
+        configmap_items=[],
+        secret_items=[],
+        service_items=[],
+        ingress_items=[],
+    )
+    a, b = tmp_path / "a.json", tmp_path / "b.json"
+    snap.captured_at = "2026-01-01T00:00:00+00:00"
+    save_snapshot(snap, str(a))
+    save_snapshot(snap, str(b))
+    assert a.read_text() == b.read_text()
+
+
+def test_load_rejects_unknown_format_version(tmp_path):
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps({"format_version": 99}))
+    with pytest.raises(ValueError, match="format_version"):
+        load_snapshot(str(path))
+
+
+def test_load_missing_file_raises():
+    with pytest.raises(FileNotFoundError):
+        load_snapshot("/nonexistent/snap.json")
